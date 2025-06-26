@@ -1,0 +1,100 @@
+name: Telegram APK Builder
+
+on:
+  repository_dispatch:
+    types: [telegram-bot-build]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+      
+    - name: Set up JDK 17
+      uses: actions/setup-java@v3
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+        
+    - name: Set up Android SDK
+      uses: android-actions/setup-android@v2
+      
+    - name: Create project structure
+      run: |
+        mkdir -p app/src/main/java/com/example/app
+        mkdir -p app/src/main/res/layout
+        mkdir -p app/src/main/res/values
+        mkdir -p app/src/main
+        
+    - name: Extract files
+      run: |
+        echo "${{ github.event.client_payload.java_files }}" | base64 --decode | tar -xz -C app/src/main/java/com/example/app
+        echo "${{ github.event.client_payload.xml_files }}" | base64 --decode | tar -xz -C app/src/main/res
+        echo "${{ github.event.client_payload.other_files }}" | base64 --decode | tar -xz -C app/src/main
+        
+    - name: Add default files if missing
+      run: |
+        # Default AndroidManifest.xml
+        if [ ! -f "app/src/main/AndroidManifest.xml" ]; then
+          echo '<?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android"
+              package="com.example.app">
+              <application
+                  android:allowBackup="true"
+                  android:icon="@mipmap/ic_launcher"
+                  android:label="My App"
+                  android:theme="@style/AppTheme">
+                  <activity android:name=".MainActivity">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>' > app/src/main/AndroidManifest.xml
+        fi
+        
+        # Default build.gradle
+        if [ ! -f "app/build.gradle" ]; then
+          echo 'plugins {
+            id "com.android.application"
+          }
+          
+          android {
+              compileSdk 34
+              
+              defaultConfig {
+                  applicationId "com.example.app"
+                  minSdk 21
+                  targetSdk 34
+                  versionCode 1
+                  versionName "1.0"
+              }
+              
+              buildTypes {
+                  release {
+                      minifyEnabled false
+                      proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
+                  }
+              }
+          }
+          
+          dependencies {
+              implementation "androidx.appcompat:appcompat:1.6.1"
+              implementation "com.google.android.material:material:1.9.0"
+          }' > app/build.gradle
+        fi
+        
+    - name: Build APK
+      run: |
+        cd app
+        ./gradlew assembleDebug
+        
+    - name: Upload APK to Telegram
+      run: |
+        curl -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendDocument" \
+          -F chat_id="${{ github.event.client_payload.chat_id }}" \
+          -F document=@app/build/outputs/apk/debug/app-debug.apk \
+          -F caption="✅ Your APK is ready!"
